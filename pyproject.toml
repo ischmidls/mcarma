@@ -1,0 +1,63 @@
+[build-system]
+# 77 is where the SPDX `license` string and `license-files` below landed.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcarma"
+version = "0.1.1"
+description = "Multivariate continuous-time ARMA modeling of irregularly sampled astronomical multi-band light curves"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+# The author list of the companion papers, in their order. Emails stay out
+# of here; CITATION.cff carries the contact details.
+authors = [
+    { name = "Izak Schmidlkofer" },
+    { name = "Zhirui Hu" },
+    { name = "Lishan Shi" },
+    { name = "Weixiang Yu" },
+    { name = "Hyungsuk Tak" },
+]
+maintainers = [
+    { name = "Izak Schmidlkofer", email = "schmidiz@oregonstate.edu" },
+]
+keywords = ["time series", "state space", "Kalman filter", "CARMA", "astronomy", "quasars"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+# The library itself imports only these three at module scope. matplotlib and
+# numdifftools are imported inside the functions that need them, so a user who
+# only fits models never has to install them; see the optional extras below.
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "jax>=0.4",
+]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.7"]
+numdiff = ["numdifftools>=0.9"]
+analysis = ["pandas>=2.0", "statsmodels>=0.14"]
+# What CI installs: the test runner plus the two packaging tools the build
+# check calls.
+dev = ["pytest>=7", "build>=1.0", "twine>=5.0"]
+
+# The paper entries wait for identifiers; CITATION.cff carries the same TODO.
+[project.urls]
+Homepage = "https://github.com/ischmidls/mcarma"
+Repository = "https://github.com/ischmidls/mcarma"
+Issues = "https://github.com/ischmidls/mcarma/issues"
+
+[tool.setuptools]
+packages = ["mcarma"]

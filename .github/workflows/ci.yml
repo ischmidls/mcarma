@@ -1,0 +1,96 @@
+name: ci
+
+# Two questions, kept apart on purpose. `tests` asks whether the code is right,
+# from a checkout. `package` asks whether what ships is usable: whether the
+# sdist carries the examples and their data, whether a clean install imports,
+# and whether importing mcarma still avoids pulling in jax.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[plots,numdiff,analysis,dev]"
+      - name: pytest
+        run: pytest tests/ -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: build
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+          # A stale egg-info would feed setuptools a wrong file list.
+          rm -rf mcarma.egg-info dist
+          python -m build
+          twine check dist/*
+          ls -l dist
+
+      - name: the sdist carries the examples and their data
+        run: |
+          tar tzf dist/*.tar.gz | grep -E 'examples/(README\.md|stripe82\.py|one_band_psd\.py|cross_band_coherence\.py|sdss_stripe82_demo\.py|data/1000679)$' | sort
+          # Six paths, or the manifest dropped something.
+          test "$(tar tzf dist/*.tar.gz | grep -cE 'examples/(README\.md|stripe82\.py|one_band_psd\.py|cross_band_coherence\.py|sdss_stripe82_demo\.py|data/1000679)$')" -eq 6
+
+      - name: install the sdist into a clean environment
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --upgrade pip
+          /tmp/venv/bin/pip install "$(ls dist/*.tar.gz)[plots]"
+
+      - name: import, and check it does not drag in jax
+        run: |
+          cd /tmp
+          /tmp/venv/bin/python -c "
+          import sys
+          import mcarma
+          print('mcarma', mcarma.__version__, 'from', mcarma.__file__)
+          jaxed = sorted(m for m in sys.modules if m == 'jax' or m.startswith('jax.'))
+          assert not jaxed, 'importing mcarma pulled in %s' % jaxed
+          for name in mcarma.__all__:
+              assert hasattr(mcarma, name), name
+          "
+
+      - name: the examples run from the sdist, with no checkout
+        run: |
+          mkdir -p /tmp/unpacked
+          tar xzf dist/*.tar.gz -C /tmp/unpacked --strip-components=1
+          cd /tmp/unpacked
+          /tmp/venv/bin/python examples/one_band_psd.py
+          /tmp/venv/bin/python examples/cross_band_coherence.py --out /tmp/coh.png
+
+      - name: the package tests pass against the installed copy
+        run: |
+          /tmp/venv/bin/pip install pytest
+          # Copied out of the checkout on purpose. Each test file inserts its
+          # own grandparent on sys.path, so run in place it would import the
+          # checkout's mcarma/ and never touch the installed copy. Under
+          # /tmp/pkgcheck there is no mcarma/ to shadow it.
+          mkdir -p /tmp/pkgcheck
+          cp -r tests /tmp/pkgcheck/tests
+          rm -rf /tmp/pkgcheck/tests/__pycache__
+          cd /tmp/pkgcheck
+          /tmp/venv/bin/python -m pytest tests -q

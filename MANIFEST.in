@@ -1,0 +1,19 @@
+include LICENSE
+include README.md
+include CITATION.cff
+
+# The demo light curve and its walkthrough. Without these the documented
+# examples do not run from an installed copy, only from a repo checkout.
+recursive-include examples *.py
+include examples/README.md
+include examples/data/*
+
+# The research tree stays out of the distribution. Nothing above sweeps it in
+# today, so these are here to keep a future include from doing it by accident.
+prune docs
+prune memo
+prune fits
+prune data
+prune weixiang
+prune .claude
+prune .github

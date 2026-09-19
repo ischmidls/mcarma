@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the paper below."
+title: "mcarma: multivariate continuous-time ARMA modeling of astronomical multi-band light curves"
+version: "0.1.1"
+license: Apache-2.0
+type: software
+authors:
+  - family-names: Schmidlkofer
+    given-names: Izak
+    affiliation: "Department of Statistics, Oregon State University"
+    email: schmidiz@oregonstate.edu
+  - family-names: Hu
+    given-names: Zhirui
+    affiliation: "Department of Statistics, Oregon State University"
+  - family-names: Shi
+    given-names: Lishan
+    affiliation: "Department of Statistics, Pennsylvania State University"
+  - family-names: Yu
+    given-names: Weixiang
+    affiliation: "The Research Institute of Basic Sciences, Pennsylvania State University"
+  - family-names: Tak
+    given-names: Hyungsuk
+    orcid: "https://orcid.org/0000-0003-0334-8742"
+    affiliation: "Department of Statistics, Pennsylvania State University"
+    email: tak@psu.edu
+# TODO before submission: fill in journal, year, volume, pages and DOI once the
+# companion papers are accepted, and add a software DOI (Zenodo) here.
+preferred-citation:
+  type: article
+  title: "Multivariate continuous-time autoregressive moving average modeling of astronomical multi-band time series"
+  authors:
+    - family-names: Schmidlkofer
+      given-names: Izak
+    - family-names: Hu
+      given-names: Zhirui
+    - family-names: Shi
+      given-names: Lishan
+    - family-names: Yu
+      given-names: Weixiang
+    - family-names: Tak
+      given-names: Hyungsuk
+  year: 2026
