@@ -1,15 +1,17 @@
 # mcarma
 
-Fit continuous-time ARMA models to several bands of an astronomical light curve
-at once, by penalized maximum likelihood, on data sampled as irregularly as real
-observations are.
+Fit multivariate continuous-time autoregressive moving average (MCARMA) models
+jointly to irregularly sampled multi-band astronomical time series.
 
-Single-band CARMA fits are standard for quasar variability (Kelly et al. 2014).
-The multiband case is what this package is for: the bands are modeled as one
-process driven by correlated noise, so the cross-band spectrum is estimated
-rather than assumed, and each band's spectrum is constrained by every epoch
-instead of only its own. Builds on the multiband damped random walk of Hu et al.
-(2020).
+The package extends multivariate damped random walk modeling to higher-order
+stochastic dynamics. Each band can have its own temporal dynamics, while
+dependence across bands is modeled through correlated stochastic drivers. The
+resulting matrix-valued power spectral density characterizes both marginal
+variability within individual bands and dependence across bands.
+
+mcarma supports irregular sampling, heteroscedastic measurement errors, and
+partially observed bands, and fits the joint model using penalized maximum
+likelihood and state-space computation.
 
 ```bash
 pip install mcarma
@@ -18,7 +20,7 @@ pip install mcarma
 Not on PyPI until the papers are submitted; until then install from a
 checkout (see Development at the bottom).
 
-## Fit one object
+## Fit one multi-band object
 
 ```python
 import numpy as np
@@ -45,13 +47,14 @@ fitted parameter vector, `res["loglik"]` the penalized value and
 
 ## Examples
 
-Three runnable examples ship with the package, on a real SDSS Stripe 82 quasar
-light curve that ships with them. Nothing here needs a cluster or a download.
+Three runnable examples are included using an SDSS Stripe 82 quasar light curve
+distributed with the package. The examples require no external data downloads
+and can be run on a standard computer.
 
 | script | what it does | roughly how long |
 | --- | --- | --- |
 | `one_band_psd.py` | fits one filter, prints the variability timescale and the spectrum around its break | 10 seconds |
-| `cross_band_coherence.py` | fits all five filters as one process, prints the cross-band coherence, plots the five spectra | 1 minute |
+| `cross_band_coherence.py` | jointly fits all five filters and estimates cross-band coherence and marginal PSDs | 1 minute |
 | `sdss_stripe82_demo.py` | the full walkthrough: the (1,0)/(2,0)/(2,1) order ladder, AICc selection, light curve and PSD figure | several minutes |
 
 ```bash
@@ -71,11 +74,19 @@ examples directory carries a longer walkthrough of what each one shows.
 
 ## Model
 
+mcarma represents a $d$-band astronomical time series as a joint
+continuous-time stochastic process. Band-specific ARMA dynamics determine the
+marginal temporal behavior, while correlated Wiener drivers introduce
+dependence across bands.
+
 $$dZ(t)=F Z(t)dt + G\,dB(t),\ \mathrm{Cov}(dB)=\Sigma dt;\quad
 Y_k = C_k(\mu + H Z_k) + \varepsilon_k,\ \varepsilon_k\sim N(0,R_k).$$
 
-$F$ is built from AR Jones factors, $H$ from MA Jones factors; cross-band
-dependence enters only through $\Sigma$. Parameter vector:
+$F$ is built from AR Jones factors, $H$ from MA Jones factors. Under the
+structured MCARMA formulation implemented here, cross-band dependence is
+introduced through the covariance matrix $\Sigma$ of the Wiener drivers.
+
+Parameter vector:
 
 ```
 theta = [ AR | MA | chol(Sigma) | mu ],   dim = d*p + d*q + d(d+1)/2 + d
@@ -90,8 +101,10 @@ The likelihood is the Kalman prediction-error decomposition
 (`mcarma/statespace.py`, Lyapunov `Qd`). The analytic
 gradient and Hessian-vector products are in
 `mcarma/jax_loglik.py` and are what `use_jax_grad=True`
-selects. Production fits add penalties (observable band, AR damping, one-sided
-Sigma box) and take standard errors from the penalized Hessian.
+selects. Production fits use regularization to improve numerical stability and
+discourage poorly identified parameter configurations; model comparison is
+based on the ordinary, unpenalized likelihood. Standard errors are taken from
+the penalized Hessian.
 
 ## Dependencies
 

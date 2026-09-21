@@ -101,11 +101,14 @@ def plot_order_panels(panels, out, suptitle, ylabel, obs_label,
                 "o", ms=3.4, mfc=_OBS_MFC, mec="0.25", mew=0.3, alpha=0.9,
                 label=obs_label)
         ax.axhline(0.0, color="0.6", lw=0.6, ls=":")
-        ax.set_ylabel(ylabel, fontsize=sz["label"])
         ax.tick_params(axis="both", labelsize=sz["tick"])
         ax.text(0.015, 0.87, pan["title"], transform=ax.transAxes,
                 fontsize=sz["annot"],
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="0.7"))
+    # One y label for the stack, not one per panel: the panels share the
+    # quantity and the axis, and at a legible label size three copies
+    # collide into an unreadable run down the left margin.
+    axes[n // 2].set_ylabel(ylabel, fontsize=sz["label"])
     axes[0].legend(loc="upper right", fontsize=sz["legend"], framealpha=0.9,
                    ncol=3)
     axes[-1].set_xlabel(xlabel, fontsize=sz["label"])

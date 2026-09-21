@@ -38,7 +38,19 @@ from .model_utils import compute_aicc
 from .simulate import simulate, mcarma_psd
 from .reporting import sigma_to_var_corr
 
-__version__ = "0.1"
+# One source of truth, the distribution metadata, because a literal here
+# drifted to 0.1 while pyproject.toml, CITATION.cff and the papers said
+# 0.1.1. The fallback is only reached from a source tree that was never
+# installed.
+try:
+    from importlib.metadata import PackageNotFoundError, version as _version
+    try:
+        __version__ = _version("mcarma")
+    except PackageNotFoundError:
+        __version__ = "0.1.1"
+    del _version, PackageNotFoundError
+except ImportError:
+    __version__ = "0.1.1"
 
 __all__ = [
     "ObservationData",
