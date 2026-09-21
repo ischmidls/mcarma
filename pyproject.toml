@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcarma"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Multivariate continuous-time ARMA modeling of irregularly sampled astronomical multi-band light curves"
 readme = "README.md"
 license = "Apache-2.0"
@@ -61,3 +61,7 @@ Issues = "https://github.com/ischmidls/mcarma/issues"
 
 [tool.setuptools]
 packages = ["mcarma"]
+
+[tool.setuptools.dynamic]
+# Single-sourced from the package, see mcarma/__init__.py.
+version = {attr = "mcarma.__version__"}

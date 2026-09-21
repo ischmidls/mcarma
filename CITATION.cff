@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite both the software and the paper below."
 title: "mcarma: multivariate continuous-time ARMA modeling of astronomical multi-band light curves"
-version: "0.1.1"
+version: "0.1.2"
 license: Apache-2.0
 type: software
 authors:
