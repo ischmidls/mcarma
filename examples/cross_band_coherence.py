@@ -34,10 +34,8 @@ import matplotlib.pyplot as plt
 from mcarma import (ObservationData, fit, compute_aicc, mcarma_psd,
                     sigma_to_var_corr)
 
-from mcarma.model_utils import build_perband_warm_theta
-
 from stripe82 import (N_BANDS, BAND_LABELS, BAND_COLORS, HERE, DEFAULT_OBJ,
-                      load_stripe82, production_prior_kwargs, n_params)
+                      load_stripe82, n_params)
 
 OUT_PNG = os.path.join(HERE, "cross_band_coherence.png")
 
@@ -70,15 +68,10 @@ def main():
     print(f"{obj_name}: {data.n} epochs over {t.max() - t.min():.0f} days, "
           f"per-band counts = {[int((band == b).sum()) for b in range(d)]}")
 
-    # Warm start the joint fit from five independent single-band fits, which is
-    # what the production pipeline does. A 23-parameter search started at random
-    # takes minutes on finite-difference gradients; started here it takes
-    # seconds, and it is the same optimum.
-    priors = production_prior_kwargs(y, band, d)
-    warm = build_perband_warm_theta(t, y, band, R, d, p, q,
-                                    n_restarts=args.n_restarts_perband, seed=0)
-    res = fit(data, p, q, n_restarts=1, warm_theta=warm, seed=0,
-              use_jax_grad=True, **priors)
+    # fit() warm starts the joint fit from five independent single-band fits,
+    # as the production pipeline does, then runs both stages of the estimator.
+    res = fit(data, p, q, n_restarts=1,
+              n_restarts_perband=args.n_restarts_perband, seed=0)
     k = n_params(d, p, q)
     print(f"mCARMA({p},{q}) fit: loglik={res['loglik_pure']:.2f}  k={k}  "
           f"AICc={compute_aicc(res['loglik_pure'], k, data.n):.2f}")

@@ -10,40 +10,55 @@ resulting matrix-valued power spectral density characterizes both marginal
 variability within individual bands and dependence across bands.
 
 mcarma supports irregular sampling, heteroscedastic measurement errors, and
-partially observed bands, and fits the joint model using penalized maximum
-likelihood and state-space computation.
+partially observed bands, and fits the joint model by maximum likelihood with
+state-space computation.
 
 ```bash
 pip install mcarma
 ```
 
-Not on PyPI until the papers are submitted; until then install from a
-checkout (see Development at the bottom).
-
 ## Fit one multi-band object
 
 ```python
 import numpy as np
-from mcarma import ObservationData, fit, compute_aicc, mcarma_psd
+from mcarma import ObservationData, fit, mcarma_psd
 
 # One scalar measurement per row: time, magnitude, which band, and the
 # measurement variance. Bands need not be observed together.
 data = ObservationData(t_obs=t, y_obs=y, band=band, R=err**2, d=5)
 
-res = fit(data, p=2, q=1, n_restarts=4, use_jax_grad=True)
-
-k    = 5 * 2 + 5 * 1 + 5 * 6 // 2 + 5          # AR + MA + chol(Sigma) + mu
-aicc = compute_aicc(res["loglik_pure"], k, data.n)
+res = fit(data, p=2, q=1)                     # the two-stage estimator
+res["aicc"]                                    # model selection score
 
 freqs = np.logspace(-3.5, -0.7, 400)           # cycles per day
 psd   = mcarma_psd(res["F"], res["G"], res["H"], res["Sigma"], freqs)
 psd[:, 2, 2]                                   # the r band's own spectrum
 ```
 
-Each band is centered internally, so pass raw magnitudes. `res["theta"]` is the
-fitted parameter vector, `res["loglik"]` the penalized value and
-`res["loglik_pure"]` the plain one, which is what AICc must be scored on.
-`res["hess_inv"]` carries the inverse Hessian when the optimizer produced one.
+`fit` is the estimator used in the papers, and it runs in two stages:
+
+1. **Stage 1** maximizes a penalized likelihood from a warm start built out of
+   independent single-band fits. The penalties are a soft box on each band's
+   driving variance, priors that keep the AR and MA timescales inside the
+   observed range, a floor on the AR decay rate, and diagonal loading of the
+   driving covariance. They exist only to find a good starting point.
+2. **Stage 2** starts from the stage-1 point and maximizes the ordinary
+   likelihood, with no penalty.
+
+Every reported quantity comes from stage 2. Each band is centered before
+fitting and the means are shifted back, so pass raw magnitudes. `res["theta"]`
+is the fitted parameter vector, `res["loglik"]` the ordinary log-likelihood,
+`res["aicc"]` the AICc built from it, and `res["converged"]` says whether stage
+2 reached a stationary point above its start. `res["hess_inv"]` carries the
+inverse Hessian from stage 2 when the optimizer produced one.
+
+The single-stage optimizer is still available as `fit_penalized`
+(`mcarma.fit.fit`) for anyone who wants to set the penalties by hand. Its
+defaults are **not** the papers' estimator: with `ar_band_lambda` and
+`ma_band_lambda` left as `None` it applies a legacy hinge on the AR/MA
+timescales, kept so older runs still reproduce. Pass
+`ar_band_lambda=0.0, ma_band_lambda=0.0` for the ordinary likelihood, or call
+`mcarma.stage2.finish_mle` on its result.
 
 ## Examples
 
@@ -101,10 +116,10 @@ The likelihood is the Kalman prediction-error decomposition
 (`mcarma/statespace.py`, Lyapunov `Qd`). The analytic
 gradient and Hessian-vector products are in
 `mcarma/jax_loglik.py` and are what `use_jax_grad=True`
-selects. Production fits use regularization to improve numerical stability and
-discourage poorly identified parameter configurations; model comparison is
-based on the ordinary, unpenalized likelihood. Standard errors are taken from
-the penalized Hessian.
+selects. The penalties in stage 1 improve numerical stability and steer the
+search away from poorly identified configurations. The estimate, the
+log-likelihood, model comparison and standard errors all use the ordinary,
+unpenalized likelihood at the stage-2 point.
 
 ## Dependencies
 

@@ -55,19 +55,17 @@ the pipeline in the papers. It shows:
 
 - **Loading** a real Stripe 82 file (the 17-column ugriz format) into the
   package's `ObservationData` container.
-- **Fitting** `mcarma.fit.fit` for each order with the same penalty stack the
-  production pipeline uses: the one-sided Sigma soft box (floor and ceiling on
-  the latent driving variance) plus the AR/MA band and AR-damping guardrails.
-  `examples/stripe82.py::production_prior_kwargs` mirrors
-  `fits/process_quasars/process_quasars.py`.
+- **Fitting** each order with `mcarma.fit`, the two-stage estimator the
+  papers use: a penalized stage 1 (the one-sided Sigma soft box, the AR/MA band
+  and AR-damping priors, and diagonal loading) that only finds a starting
+  point, then the ordinary likelihood from there.
 - **Selecting** the order with `mcarma.model_utils.compute_aicc`, scored on the
-  *pure* (unpenalized) maximized log-likelihood.
+  ordinary maximized log-likelihood from stage 2.
 - **Interpreting** the fit through `mcarma.simulate.mcarma_psd`, the closed-form
   multivariate PSD `P(w) = H(iwI-F)^-1 G Sigma G^T (iwI-F)^-H H^T / 2pi`.
 
-It runs on finite-difference gradients, which is why it is the slow one.
-`--quick` fits (1,0) alone; lowering `--n-restarts` gives a rougher, faster
-look.
+It fits three orders, which is why it is the slow one. `--quick` fits (1,0)
+alone; lowering `--n-restarts` gives a rougher, faster look.
 
 ## Bundled data
 
@@ -76,14 +74,14 @@ across five filters over 3337 days (64 of them in r). It was copied from
 `fits/QSO_S82/`, where the other 9257 objects of the sample live.
 
 `examples/stripe82.py` holds the pieces the three scripts share: the file
-format, the production penalty stack, and the AICc parameter count. It is
+format and the AICc parameter count. It is
 example scaffolding, not part of the public API.
 
 ## Demo versus production
 
 These examples fit one object. The real pipeline (`fits/process_quasars/`) fits
-hundreds as a SLURM array, always with the analytic JAX gradient, and adds a
-penalized-Hessian and parametric-bootstrap standard-error pass. The modeling is
+hundreds as a SLURM array and adds a standard-error pass (Hessian and
+parametric bootstrap). The modeling is
 the same; the scale is not.
 
 ## Cadence note (SDSS versus LSST)

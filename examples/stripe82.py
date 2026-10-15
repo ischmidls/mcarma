@@ -1,7 +1,7 @@
 """Shared pieces for the mcarma examples.
 
-Three things all the examples need: the SDSS Stripe 82 file format, the penalty
-stack the production pipeline runs with, and the AICc parameter count. They live
+Two things all the examples need: the SDSS Stripe 82 file format and the AICc
+parameter count. They live
 here so the examples stay short and so a change to any of them is made once.
 
 Nothing in here is part of the mcarma public API. It is example scaffolding, and
@@ -48,34 +48,6 @@ def load_stripe82(filepath):
     t, y, band, R = map(np.asarray, (t, y, band, R))
     order = np.argsort(t, kind="stable")
     return t[order], y[order].astype(float), band[order].astype(int), R[order]
-
-
-def production_prior_kwargs(y, band, d):
-    """The production penalty stack (matches process_quasars.py defaults).
-
-    Sigma soft-box: one-sided log-normal on the driving variance, floor at
-    (1e-4 * band_std)^2 and ceiling at (10 * band_std)^2, lambda=10. Plus the
-    AR/MA band and AR-damping log-uniform guardrails (lambda=1e3).
-    """
-    global_sd = float(np.std(y)) if y.size else 1.0
-    center_lo = np.empty(d)
-    center_hi = np.empty(d)
-    for b in range(d):
-        yb = y[band == b]
-        sd_b = float(np.std(yb)) if yb.size >= 2 else global_sd
-        if not (sd_b > 0.0):
-            sd_b = global_sd if global_sd > 0.0 else 1.0
-        center_lo[b] = 2.0 * np.log(1e-4 * sd_b)   # floor on latent driving var
-        center_hi[b] = 2.0 * np.log(10.0 * sd_b)   # ceiling walls off Sigma->inf
-    return dict(
-        chol_ridge_lambda=10.0,
-        chol_ridge_center=center_lo,
-        chol_ridge_onesided=True,
-        chol_ridge_center_hi=center_hi,
-        ar_band_lambda=1e3,
-        ma_band_lambda=1e3,
-        ar_damping_lambda=1e3,
-    )
 
 
 def n_params(d, p, q):

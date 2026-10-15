@@ -132,10 +132,178 @@ def _nelder_mead(theta0, data, p, q, maxiter, slopes=None):
     return np.asarray(res.x, float), bool(res.success)
 
 
+def _run_rung(name, data, p, q, theta_start, seed, maxiter, use_jax_grad,
+              ma_above_ar, nm_maxiter, slopes, base, precondition,
+              n_restarts_multi, tol):
+    """Run one ladder rung from ``theta_start``; return (theta, ok, res, error).
+
+    Every rung starts from the same point with the same seed and reads nothing
+    another rung produced, which is what lets finish_mle(parallel=True) run the
+    rungs side by side and still return what the serial ladder returns.
+    """
+    res = None
+    if name == "nelder_mead":
+        try:
+            th, ok = _nelder_mead(theta_start, data, p, q, nm_maxiter,
+                                  slopes=slopes)
+            # The simplex escapes, then a local BFGS from where it landed
+            # certifies the point. Two reasons the rung does not stop at the
+            # simplex: Nelder-Mead terminates on a small SIMPLEX, which says
+            # nothing about the gradient, so its point often fails the
+            # stationarity test that decides acceptance; and it returns no
+            # curvature, while the SE dispatcher reads hess_inv off the
+            # fit() result. Keeping the BFGS point only when it does not
+            # fall back means the rung is still monotone.
+            pol = fit(data, p, q, n_restarts=1, warm_theta=th,
+                      maxiter=maxiter, seed=seed, ma_above_ar=ma_above_ar,
+                      use_jax_grad=False, local_only=True,
+                      **dict(base, **PLAIN_PK))
+            th_pol = None if pol is None else pol.get("theta")
+            keep = (th_pol is not None and
+                    plain_ll(th_pol, data, p, q, slopes=slopes)
+                    >= plain_ll(th, data, p, q, slopes=slopes) - tol)
+            if keep:
+                th, ok, res = th_pol, bool(pol.get("success", ok)), pol
+        except Exception as exc:
+            return None, False, None, str(exc)
+    else:
+        local = name.endswith("_local")
+        kw = dict(base)
+        kw["use_jax_grad"] = bool(use_jax_grad) and name.startswith("jax")
+        kw["local_only"] = local
+        kw.update(PLAIN_PK)
+        if not local:
+            # The multi-seed rung is the one that can hand back another
+            # basin's optimum. With local_only=False, fit() appends the
+            # damping-reset seeds for p >= 2, and under JAX it ranks those
+            # seeds on the objective it minimized rather than on the
+            # likelihood this ladder scores them with, so the seed it
+            # returns need not be the best one it found and the losers are
+            # discarded unscored. Ranking on plain_ll removes that: the same
+            # function decides the winner inside fit() and the acceptance
+            # test outside it. The local rungs run a single seed, so ranking
+            # cannot change their outcome and they are left exactly as
+            # production ran them.
+            kw["restart_score"] = \
+                lambda th: plain_ll(th, data, p, q, slopes=slopes)
+        try:
+            res = fit(data, p, q,
+                      n_restarts=(1 if local else n_restarts_multi),
+                      warm_theta=theta_start, maxiter=maxiter, seed=seed,
+                      ma_above_ar=ma_above_ar,
+                      precondition=precondition, **kw)
+        except Exception as exc:
+            return None, False, None, str(exc)
+        th = None if res is None else res.get("theta")
+        ok = bool(res.get("success", False)) if res else False
+        if th is None:
+            return None, False, None, "no theta"
+    return th, ok, res, None
+
+
+def _rung_worker(name, obs, p, q, rest):
+    """Process-pool entry point. The observations travel as plain arrays and
+    the ObservationData is rebuilt here, so nothing a parent process cached on
+    the object (compiled JAX closures, for one) has to survive pickling."""
+    from .observation import ObservationData
+    import pickle
+    t, y, band, R, d = obs
+    data = ObservationData(t, y, band, R, d=d)
+    th, ok, res, err = _run_rung(name, data, p, q, *rest)
+    if res is not None:
+        keep = {}
+        for k, v in res.items():
+            try:
+                pickle.dumps(v)
+            except Exception:
+                continue
+            keep[k] = v
+        res = keep
+    return th, ok, res, err
+
+
+class _ParallelRungs:
+    """Every rung started at once, one spawned process each, read back in
+    ladder order. Spawn rather than fork: the parent has usually initialized
+    JAX, and forking a process with live XLA threads can hang. ``close`` kills
+    whatever is still running, so once the ladder accepts a rung the slower
+    ones behind it stop costing anything, as they would serially."""
+
+    def __init__(self, names, data, rung_args):
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+        obs = (np.asarray(data.t_obs, float), np.asarray(data.y_obs, float),
+               np.asarray(data.band, int),
+               np.array([float(r[0, 0]) for r in data.R_list]), int(data.d))
+        p, q, rest = rung_args[0], rung_args[1], rung_args[2:]
+        self.ex = ProcessPoolExecutor(max_workers=len(names),
+                                      mp_context=mp.get_context("spawn"))
+        self.futs = [self.ex.submit(_rung_worker, n, obs, p, q, rest)
+                     for n in names]
+
+    def __getitem__(self, i):
+        try:
+            return self.futs[i].result()
+        except Exception as exc:
+            return None, False, None, f"worker: {exc}"
+
+    def close(self):
+        for proc in list(getattr(self.ex, "_processes", {}).values()):
+            if proc.is_alive():
+                proc.terminate()
+        self.ex.shutdown(wait=False, cancel_futures=True)
+
+
+def _ladder(names, outcomes, data, p, q, rung_args, ll0, tol, gtol_rel,
+            use_jax_grad, slopes, best, trail):
+    """The rung loop of finish_mle: run (or, in parallel mode, collect) each
+    rung in ladder order, score it, and stop at the first accepted one."""
+    for i, name in enumerate(names):
+        # Serially, a rung runs only if every earlier one failed. In parallel
+        # every rung is already running, and this reads them back in ladder
+        # order with the same break, so the winner and the trail are the ones
+        # the serial ladder would have produced.
+        th, ok, res, err = (outcomes[i] if outcomes is not None
+                            else _run_rung(name, data, *rung_args))
+        if err is not None:
+            trail.append({"attempt": name, "ll": float("nan"), "error": err})
+            continue
+
+        # Scored by the same call every time; the optimizer's own number never
+        # enters the comparison.
+        ll = plain_ll(th, data, p, q, slopes=slopes)
+        gnorm = (plain_grad_norm(th, data, p, q, use_jax=use_jax_grad,
+                                 slopes=slopes)
+                 if np.isfinite(ll) else float("nan"))
+        rose = np.isfinite(ll) and (not np.isfinite(ll0) or ll >= ll0 - tol)
+        stationary = np.isfinite(gnorm) and \
+            gnorm <= gtol_rel * max(1.0, abs(ll))
+        trail.append({"attempt": name, "ll": ll, "grad_norm": gnorm,
+                      "scipy_success": bool(ok), "rose": bool(rose),
+                      "stationary": bool(stationary)})
+
+        cand = {"theta": np.asarray(th, float), "ll": ll, "attempt": name,
+                "grad_norm": gnorm, "ok": bool(rose and stationary),
+                "res": res}
+        # Prefer a point that qualifies as an MLE over one that merely scores
+        # higher, so a non-stationary excursion cannot displace a converged
+        # optimum. Among equals, the higher likelihood wins.
+        if np.isfinite(ll) and (
+                (cand["ok"] and not best["ok"])
+                or (cand["ok"] == best["ok"] and ll > best["ll"] + tol)):
+            best = cand
+        if cand["ok"]:
+            # Rose above its start and is stationary for the ordinary
+            # likelihood: an MLE reached from the regularized initialization.
+            break
+
+    return best, trail
+
+
 def finish_mle(data, p, q, theta_start, ll_start=None, seed=0, maxiter=1000,
                use_jax_grad=True, ma_above_ar=False, fit_kwargs=None,
                tol=1e-8, gtol_rel=1e-4, nm_maxiter=4000, attempts=None,
-               precondition=None, slopes=None):
+               precondition=None, slopes=None, parallel=False):
     """Optimize the ordinary likelihood from ``theta_start`` until it converges
     to a point at least as good as the start.
 
@@ -236,98 +404,17 @@ def finish_mle(data, p, q, theta_start, ll_start=None, seed=0, maxiter=1000,
     # fallback outcome without an optimizer in the way. It is how the
     # fallback contract is tested; `attempts=None` still means the full
     # ladder, so production is unaffected.
-    for name in (LADDER if attempts is None else attempts):
-        res = None
-        if name == "nelder_mead":
-            try:
-                th, ok = _nelder_mead(theta_start, data, p, q, nm_maxiter,
-                                      slopes=slopes)
-                # The simplex escapes, then a local BFGS from where it landed
-                # certifies the point. Two reasons the rung does not stop at the
-                # simplex: Nelder-Mead terminates on a small SIMPLEX, which says
-                # nothing about the gradient, so its point often fails the
-                # stationarity test that decides acceptance; and it returns no
-                # curvature, while the SE dispatcher reads hess_inv off the
-                # fit() result. Keeping the BFGS point only when it does not
-                # fall back means the rung is still monotone.
-                pol = fit(data, p, q, n_restarts=1, warm_theta=th,
-                          maxiter=maxiter, seed=seed, ma_above_ar=ma_above_ar,
-                          use_jax_grad=False, local_only=True,
-                          **dict(base, **PLAIN_PK))
-                th_pol = None if pol is None else pol.get("theta")
-                keep = (th_pol is not None and
-                        plain_ll(th_pol, data, p, q, slopes=slopes)
-                        >= plain_ll(th, data, p, q, slopes=slopes) - tol)
-                if keep:
-                    th, ok, res = th_pol, bool(pol.get("success", ok)), pol
-            except Exception as exc:
-                trail.append({"attempt": name, "ll": float("nan"),
-                              "error": str(exc)})
-                continue
-        else:
-            local = name.endswith("_local")
-            kw = dict(base)
-            kw["use_jax_grad"] = bool(use_jax_grad) and name.startswith("jax")
-            kw["local_only"] = local
-            kw.update(PLAIN_PK)
-            if not local:
-                # The multi-seed rung is the one that can hand back another
-                # basin's optimum. With local_only=False, fit() appends the
-                # damping-reset seeds for p >= 2, and under JAX it ranks those
-                # seeds on the objective it minimized rather than on the
-                # likelihood this ladder scores them with, so the seed it
-                # returns need not be the best one it found and the losers are
-                # discarded unscored. Ranking on plain_ll removes that: the same
-                # function decides the winner inside fit() and the acceptance
-                # test outside it. The local rungs run a single seed, so ranking
-                # cannot change their outcome and they are left exactly as
-                # production ran them.
-                kw["restart_score"] = \
-                    lambda th: plain_ll(th, data, p, q, slopes=slopes)
-            try:
-                res = fit(data, p, q,
-                          n_restarts=(1 if local else n_restarts_multi),
-                          warm_theta=theta_start, maxiter=maxiter, seed=seed,
-                          ma_above_ar=ma_above_ar,
-                          precondition=precondition, **kw)
-            except Exception as exc:
-                trail.append({"attempt": name, "ll": float("nan"),
-                              "error": str(exc)})
-                continue
-            th = None if res is None else res.get("theta")
-            ok = bool(res.get("success", False)) if res else False
-            if th is None:
-                trail.append({"attempt": name, "ll": float("nan"),
-                              "error": "no theta"})
-                continue
-
-        # Scored by the same call every time; the optimizer's own number never
-        # enters the comparison.
-        ll = plain_ll(th, data, p, q, slopes=slopes)
-        gnorm = (plain_grad_norm(th, data, p, q, use_jax=use_jax_grad,
-                                 slopes=slopes)
-                 if np.isfinite(ll) else float("nan"))
-        rose = np.isfinite(ll) and (not np.isfinite(ll0) or ll >= ll0 - tol)
-        stationary = np.isfinite(gnorm) and \
-            gnorm <= gtol_rel * max(1.0, abs(ll))
-        trail.append({"attempt": name, "ll": ll, "grad_norm": gnorm,
-                      "scipy_success": bool(ok), "rose": bool(rose),
-                      "stationary": bool(stationary)})
-
-        cand = {"theta": np.asarray(th, float), "ll": ll, "attempt": name,
-                "grad_norm": gnorm, "ok": bool(rose and stationary),
-                "res": res}
-        # Prefer a point that qualifies as an MLE over one that merely scores
-        # higher, so a non-stationary excursion cannot displace a converged
-        # optimum. Among equals, the higher likelihood wins.
-        if np.isfinite(ll) and (
-                (cand["ok"] and not best["ok"])
-                or (cand["ok"] == best["ok"] and ll > best["ll"] + tol)):
-            best = cand
-        if cand["ok"]:
-            # Rose above its start and is stationary for the ordinary
-            # likelihood: an MLE reached from the regularized initialization.
-            break
+    names = tuple(LADDER if attempts is None else attempts)
+    rung_args = (p, q, theta_start, seed, maxiter, use_jax_grad, ma_above_ar,
+                 nm_maxiter, slopes, base, precondition, n_restarts_multi, tol)
+    outcomes = (_ParallelRungs(names, data, rung_args)
+                if parallel and len(names) > 1 else None)
+    try:
+        best, trail = _ladder(names, outcomes, data, p, q, rung_args, ll0,
+                              tol, gtol_rel, use_jax_grad, slopes, best, trail)
+    finally:
+        if outcomes is not None:
+            outcomes.close()
 
     return {"theta": best["theta"], "ll": best["ll"],
             "attempt": best["attempt"], "converged": bool(best["ok"]),

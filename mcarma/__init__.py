@@ -1,8 +1,8 @@
 """mcarma — multivariate CARMA modeling of irregularly sampled light curves.
 
-Penalized maximum-likelihood fitting of multiband continuous-time ARMA models
-to astronomical light curves, plus the closed-form multivariate PSD
-and a data simulator. Builds on single-band CARMA (Kelly et al. 2014) and the
+Maximum-likelihood fitting of multiband continuous-time ARMA models to
+astronomical light curves, plus the closed-form multivariate PSD and a data
+simulator. Builds on single-band CARMA (Kelly et al. 2014) and the
 multiband damped random walk (Hu et al. 2020).
 
 Quick start
@@ -10,9 +10,16 @@ Quick start
     from mcarma import ObservationData, fit, compute_aicc, mcarma_psd
 
     data = ObservationData(t, y, band, R, d=5)     # scalar (t, band) observations
-    res  = fit(data, p=2, q=1)                      # MLE + optional penalties
-    aicc = compute_aicc(res["loglik_pure"], k, data.n)
+    res  = fit(data, p=2, q=1)                      # the papers' two-stage MLE
+    aicc = res["aicc"]
     psd  = mcarma_psd(res["F"], res["G"], res["H"], res["Sigma"], freqs)
+
+`fit` is `mcarma.estimate.fit`: a penalized stage 1 that only finds a starting
+point, then the ordinary likelihood from there. Everything it reports comes
+from stage 2. The single-stage penalized optimizer is `fit_penalized`
+(`mcarma.fit.fit`); with its default arguments it applies a legacy hinge on the
+AR/MA timescales, so it is not the papers' estimator unless you pass
+``ar_band_lambda=0.0, ma_band_lambda=0.0``.
 
 See `examples/sdss_stripe82_demo.py` for a full worked example on real SDSS
 Stripe 82 data.
@@ -33,7 +40,8 @@ import logging as _logging
 _logging.getLogger(__name__).addHandler(_logging.NullHandler())
 
 from .observation import ObservationData
-from .fit import fit
+from .estimate import fit
+from .fit import fit as fit_penalized
 from .model_utils import compute_aicc
 from .simulate import simulate, mcarma_psd
 from .reporting import sigma_to_var_corr
@@ -41,11 +49,12 @@ from .reporting import sigma_to_var_corr
 # The one place the version is written. pyproject.toml derives the
 # distribution version from this attribute, so the two cannot drift; they
 # already had, with this file saying 0.1 while everything else said 0.1.1.
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 __all__ = [
     "ObservationData",
     "fit",
+    "fit_penalized",
     "compute_aicc",
     "simulate",
     "mcarma_psd",

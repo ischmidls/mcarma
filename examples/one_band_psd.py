@@ -29,7 +29,7 @@ import numpy as np
 from mcarma import ObservationData, fit, compute_aicc, mcarma_psd
 
 from stripe82 import (BAND_LABELS, DEFAULT_OBJ, load_stripe82,
-                      production_prior_kwargs, n_params)
+                      n_params)
 
 
 def main():
@@ -57,8 +57,7 @@ def main():
           f"{t.max() - t.min():.0f} days, median gap {np.median(np.diff(t)):.1f} days")
 
     p, q = 1, 0
-    res = fit(data, p, q, n_restarts=args.n_restarts, seed=0,
-              use_jax_grad=True, **production_prior_kwargs(y, band, 1))
+    res = fit(data, p, q, n_restarts=args.n_restarts, seed=0)
     k = n_params(1, p, q)
     print(f"CARMA({p},{q}) fit: loglik={res['loglik_pure']:.2f}  k={k}  "
           f"AICc={compute_aicc(res['loglik_pure'], k, data.n):.2f}")

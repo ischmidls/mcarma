@@ -9,15 +9,12 @@ spectral density (PSD) of each band.
 This is the "SDSS demo / appendix" for the shipped package — it exercises the
 public API end-to-end on the bundled example object (examples/data/1000679, a
 5-band ugriz light curve) with no dependency on the research tree
-(fits/, HPC, JAX). It uses the same MAP prior stack as the production pipeline
-(fits/process_quasars/process_quasars.py).
+(fits/, HPC). `mcarma.fit` is the two-stage estimator the papers report:
+a penalized stage 1 to find a starting point, then the ordinary likelihood.
 
-Timing: this runs finite-difference BFGS from random starts, which is the slow
-way to do it. `--quick` (the (1,0) fit alone) takes a few minutes on the bundled
-object, and the full (1,0)/(2,0)/(2,1) ladder several times that. Lower
-`--n-restarts` for a rougher, faster look. For the fast version of the same
-fit, see cross_band_coherence.py, which warm starts from per-band fits and uses
-the analytic JAX gradient.
+Timing: `--quick` (the (1,0) fit alone) is the fastest; the full
+(1,0)/(2,0)/(2,1) ladder takes several minutes. Lower `--n-restarts` for a
+rougher, faster look.
 
 Run:
     python examples/sdss_stripe82_demo.py                # full (1,0)/(2,0)/(2,1) ladder
@@ -28,10 +25,6 @@ Output:
     examples/sdss_stripe82_demo.png   (light curve + selected-model PSD)
     an AICc order-selection table printed to stdout
 
-Note on scale: production fits use analytic JAX gradients on a compute node
-(`--use-jax-grad`, see the run-real-data workflow) for speed and accuracy; this
-demo uses finite-difference BFGS so it is dependency-free but slower. The
-science is identical.
 """
 import argparse
 import os
@@ -49,16 +42,15 @@ import matplotlib.pyplot as plt
 from mcarma import ObservationData, fit, compute_aicc, mcarma_psd
 
 from stripe82 import (N_BANDS, BAND_LABELS, BAND_COLORS, HERE, DEFAULT_OBJ,
-                      load_stripe82, production_prior_kwargs, n_params)
+                      load_stripe82, n_params)
 
 OUT_PNG = os.path.join(HERE, "sdss_stripe82_demo.png")
 
 
 def fit_order(data, y, band, p, q, n_restarts, seed=0):
-    """Fit one mCARMA(p, q) order with the production priors; return (result, aicc)."""
-    priors = production_prior_kwargs(y, band, data.d)
-    res = fit(data, p, q, n_restarts=n_restarts, seed=seed, **priors)
-    # AICc is scored on the PURE (unpenalized) maximized log-likelihood.
+    """Fit one mCARMA(p, q) order with the two-stage estimator; return (result, aicc)."""
+    res = fit(data, p, q, n_restarts=n_restarts, seed=seed)
+    # AICc is scored on the ordinary maximized log-likelihood from stage 2.
     aicc = compute_aicc(res["loglik_pure"], n_params(data.d, p, q), data.n)
     return res, aicc
 
